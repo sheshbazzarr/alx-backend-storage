@@ -1,62 +1,36 @@
 #!/usr/bin/env python3
 """
-This module provides a function to fetch web pages while caching the results
-in a Redis database with an expiration time. It tracks how many times a URL
-is accessed.
+web cache and tracker
 """
-
-import redis
 import requests
+import redis
 from functools import wraps
-import time
+
+store = redis.Redis()
 
 
-def cache_expiration(expiration: int):
-    """
-    Decorator to cache the result of the get_page function.
+def count_url_access(method):
+    """ Decorator counting how many times
+    a URL is accessed """
+    @wraps(method)
+    def wrapper(url):
+        cached_key = "cached:" + url
+        cached_data = store.get(cached_key)
+        if cached_data:
+            return cached_data.decode("utf-8")
 
-    Args:
-        expiration (int): The expiration time in seconds for the cache.
+        count_key = "count:" + url
+        html = method(url)
 
-    Returns:
-        Callable: The wrapped function with caching functionality.
-    """
-    def decorator(func):
-        @wraps(func)
-        def wrapper(url: str) -> str:
-            """Wraps the original function to add caching."""
-            r = redis.Redis()
-
-            # Increment the access count for the URL
-            r.incr(f"count:{url}")
-
-            # Check if the page is already cached
-            cached_page = r.get(url)
-            if cached_page:
-                return cached_page.decode('utf-8')
-
-            # Call the original function to fetch the page
-            page_content = func(url)
-
-            # Cache the result with expiration
-            r.setex(url, expiration, page_content)
-
-            return page_content
-
-        return wrapper
-    return decorator
+        store.incr(count_key)
+        store.set(cached_key, html)
+        store.expire(cached_key, 10)
+        return html
+    return wrapper
 
 
-@cache_expiration(10)
+@count_url_access
 def get_page(url: str) -> str:
-    """
-    Fetch the HTML content of a URL.
-
-    Args:
-        url (str): The URL to fetch.
-
-    Returns:
-        str: The HTML content of the page.
-    """
-    response = requests.get(url)
-    return response.text
+    """ Returns HTML content of a url """
+    res = requests.get(url)
+    return res.text
