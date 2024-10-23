@@ -1,12 +1,46 @@
 #!/usr/bin/env python3
 """
 This module provides a Cache class that interacts with a Redis database.
-The Cache class allows storing and retrieving data of various types using randomly generated keys.
+It also includes a decorator to store the history of function inputs and outputs in Redis.
 """
 
 import redis
 import uuid
 from typing import Union, Callable, Optional
+from functools import wraps
+
+
+def call_history(method: Callable) -> Callable:
+    """
+    Decorator to store the history of inputs and outputs for a particular function in Redis.
+    Inputs are stored in a list under the key "<method.__qualname__>:inputs",
+    and outputs are stored under the key "<method.__qualname__>:outputs".
+
+    Args:
+        method (Callable): The function to be decorated.
+
+    Returns:
+        Callable: The wrapped function that stores its input/output history.
+    """
+    @wraps(method)
+    def wrapper(*args, **kwargs):
+        """Wrapper function to log inputs and outputs of the method in Redis."""
+        self = args[0]  # Cache instance
+        inputs_key = f"{method.__qualname__}:inputs"
+        outputs_key = f"{method.__qualname__}:outputs"
+
+        # Store input arguments in Redis
+        self._redis.rpush(inputs_key, str(args[1:]))  # Ignore self in args
+
+        # Call the original method
+        output = method(*args, **kwargs)
+
+        # Store the output in Redis
+        self._redis.rpush(outputs_key, str(output))
+
+        return output
+
+    return wrapper
 
 
 class Cache:
@@ -20,13 +54,14 @@ class Cache:
         self._redis = redis.Redis()
         self._redis.flushdb()
 
+    @call_history
     def store(self, data: Union[str, bytes, int, float]) -> str:
         """
         Store data in Redis with a randomly generated key.
 
         Args:
             data (Union[str, bytes, int, float]): The data to store.
-            
+
         Returns:
             str: The key under which the data is stored.
         """
